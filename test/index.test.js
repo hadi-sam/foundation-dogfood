@@ -36,3 +36,19 @@ test('slugify lowercases mixed case input', () => {
 test('slugify returns empty string for empty input', () => {
   assert.equal(slugify(''), '');
 });
+
+test('slugify returns empty string for null input', () => {
+  assert.equal(slugify(null), '');
+});
+
+test('slugify returns empty string for undefined input', () => {
+  assert.equal(slugify(undefined), '');
+});
+
+test('slugify returns empty string for all-special-character input', () => {
+  assert.equal(slugify('!!!@@@###'), '');
+});
+
+test('slugify returns empty string for hyphen-only input', () => {
+  assert.equal(slugify('---'), '');
+});

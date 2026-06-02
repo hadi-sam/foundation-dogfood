@@ -8,7 +8,7 @@ export function sum(a, b) {
 
 /** Convert text to a URL-friendly slug. */
 export function slugify(text) {
-  return text
+  return String(text ?? '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
