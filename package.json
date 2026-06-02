@@ -1,0 +1,11 @@
+{
+  "name": "foundation-dogfood",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Foundation pipeline dogfood sandbox (throwaway)",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check src/index.js"
+  }
+}
