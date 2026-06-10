@@ -1,0 +1,101 @@
+# Foundation — charon-final-gate workflow (TEMPLATE)
+# ---------------------------------------------------------------------------
+# CP3 off-box deterministic slice of the Charon Final Gate. Posts a head-SHA-bound
+# `charon-final-gate` check-run. HONEST SCOPE: ≈2 of 9 Final-Gate checks (see the script).
+#
+# THE PO LANDS THIS FILE at .github/workflows/charon-final-gate.yml in the project repo
+# (adding a workflow file needs the `workflow` scope, which the bot PATs do NOT have post-CP2).
+# The recheck SCRIPT (adapters/vcs/charon-deterministic-recheck.sh) is a regular file the
+# operator/agents land in the project repo — no `workflow` scope needed. It MUST exist on the
+# base branch before the gate is trusted (the run step fails closed if it is absent — see below).
+#
+# SECURITY / CORRECTNESS NOTES baked in:
+#  - PR-controlled inputs (title, body, head.ref, head.sha, base.ref) are passed via `env:`, NEVER
+#    interpolated into a `run:` shell — avoids GitHub Actions script injection.
+#  - The recheck script + its R7 patterns are read from the TRUSTED BASE ref (`git show
+#    origin/<base>:...`), NOT the PR head — a PR cannot neuter its own gate. The read is GUARDED:
+#    if the script is absent/empty on the base, the gate FAILS CLOSED (rc=2), never silently green.
+#  - The script's exit code is captured directly (rc=$?), not via PIPESTATUS — a failing recheck
+#    can never be masked by a downstream `tee`.
+#  - Assumes SAME-REPO PRs (fork PRs get a read-only GITHUB_TOKEN and cannot post the check).
+# ---------------------------------------------------------------------------
+name: charon-final-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main, test]   # main = the test->main production-promotion gate; test = feature integration
+
+permissions:
+  checks: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  charon-final-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head (full history for ancestry/diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Fetch base ref (explicit refspec so origin/<base> resolves)
+        env:
+          BASE_REF_NAME: ${{ github.event.pull_request.base.ref }}
+        run: git fetch --no-tags origin "+refs/heads/${BASE_REF_NAME}:refs/remotes/origin/${BASE_REF_NAME}"
+
+      - name: Run deterministic recheck (from the TRUSTED BASE copy, not the PR head)
+        id: recheck
+        env:
+          BASE_REF_NAME: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA:      ${{ github.event.pull_request.head.sha }}
+          SRC_BRANCH:    ${{ github.event.pull_request.head.ref }}
+          PR_TITLE:      ${{ github.event.pull_request.title }}
+          PR_BODY:       ${{ github.event.pull_request.body }}
+        run: |
+          set +e
+          # Integrity: read the script from the BASE ref (trusted), not the PR head — and GUARD the read.
+          git show "origin/${BASE_REF_NAME}:adapters/vcs/charon-deterministic-recheck.sh" > /tmp/recheck.sh 2>/dev/null
+          if [ ! -s /tmp/recheck.sh ]; then
+            echo "FATAL: recheck script absent/empty on base ref '${BASE_REF_NAME}' (first-install? wrong path?)" | tee /tmp/charon-out.txt
+            echo "rc=2" >> "$GITHUB_OUTPUT"   # fail closed — never silently green
+            exit 0
+          fi
+          chmod +x /tmp/recheck.sh
+          CHARON_BASE_REF="origin/${BASE_REF_NAME}" \
+          CHARON_HEAD_SHA="${HEAD_SHA}" \
+          CHARON_SRC_BRANCH="${SRC_BRANCH}" \
+          CHARON_TARGET_BRANCH="${BASE_REF_NAME}" \
+          CHARON_ISSUE_REF="${PR_TITLE} ${PR_BODY}" \
+            /tmp/recheck.sh > /tmp/charon-out.txt 2>&1
+          rc=$?                                # captured directly — no PIPESTATUS / tee masking
+          cat /tmp/charon-out.txt
+          echo "rc=${rc}" >> "$GITHUB_OUTPUT"
+
+      - name: Post charon-final-gate check-run (head-SHA-bound)
+        if: always()   # post even if an earlier step failed/crashed → never leave the required check stuck 'pending' (rc empty → 'failure', fail-closed)
+        uses: actions/github-script@v7
+        env:
+          RC: ${{ steps.recheck.outputs.rc }}
+        with:
+          script: |
+            const fs = require('fs');
+            const rc = process.env.RC || '';            // via env — not interpolated into JS
+            let summary = '';
+            try { summary = fs.readFileSync('/tmp/charon-out.txt', 'utf8').slice(0, 60000); }
+            catch (e) { summary = 'recheck produced no output'; }
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'charon-final-gate',
+              head_sha: context.payload.pull_request.head.sha,
+              status: 'completed',
+              conclusion: rc === '0' ? 'success' : 'failure',
+              output: {
+                title: 'Charon deterministic slice (~2 of 9 Final-Gate checks)',
+                summary: '```\n' + summary + '\n```',
+              },
+            });
+            if (rc !== '0') core.setFailed('charon-final-gate deterministic slice FAILED (rc=' + rc + ')');
