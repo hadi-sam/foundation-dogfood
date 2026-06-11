@@ -137,3 +137,20 @@ test('formatBytes throws TypeError on null and undefined', () => {
 test('formatBytes throws TypeError on an object', () => {
   assert.throws(() => formatBytes({}), TypeError);
 });
+
+test('formatBytes clamps decimals=Infinity to 0 (no RangeError)', () => {
+  assert.equal(formatBytes(1536, Infinity), '2 KB');
+  assert.equal(formatBytes(1536, -Infinity), '2 KB');
+});
+
+test('formatBytes clamps decimals=NaN to 0', () => {
+  assert.equal(formatBytes(1536, NaN), '2 KB');
+});
+
+test('formatBytes clamps decimals > 100 to 100', () => {
+  assert.equal(formatBytes(1536, 101), '1.5 KB');
+});
+
+test('formatBytes truncates non-integer decimals', () => {
+  assert.equal(formatBytes(1500, 1.7), '1.5 KB');
+});
