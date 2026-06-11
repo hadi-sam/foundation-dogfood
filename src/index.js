@@ -38,7 +38,7 @@ export function formatBytes(bytes, decimals = 2) {
     return '0 B';
   }
 
-  const dm = Math.max(0, decimals);
+  const dm = Math.min(100, Math.max(0, Number.isFinite(decimals) ? Math.trunc(decimals) : 0));
   const k = 1024;
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
 
